@@ -1,0 +1,21 @@
+[project]
+name = "deep-agent-research"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.2",
+    "deepagents>=0.3.0",
+    "fastapi>=0.127.0",
+    "google-genai>=1.56.0",
+    "langchain-google-genai>=4.1.2",
+    "langchain-openai>=1.1.6",
+    "motor>=3.7.1",
+    "openai>=2.14.0",
+    "pydantic>=2.12.5",
+    "pymongo>=4.15.5",
+    "python-dotenv>=1.2.1",
+    "streamlit>=1.52.2",
+    "tavily-python>=0.7.17",
+    "uvicorn>=0.40.0",
+]

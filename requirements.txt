@@ -1,0 +1,12 @@
+tavily-python
+deepagents
+langchain-openai
+python-dotenv
+fastapi
+uvicorn
+streamlit
+aiohttp
+openai
+pydantic
+pymongo
+motor
