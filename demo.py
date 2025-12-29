@@ -4,7 +4,9 @@ import uuid
 import os
 import ast
 from dotenv import load_dotenv
-
+for key, value in st.secrets.items():
+    if isinstance(value, str):
+        os.environ[key] = value
 def check_password():
     """Returns `True` if the user had the correct password."""
 
