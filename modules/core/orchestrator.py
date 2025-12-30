@@ -46,6 +46,7 @@ You have access to the following specialists via the `task` tool or direct tool 
    - **Input**: A specific research topic (e.g., "iPhone 16 battery specs").
    - **Output**: Saves findings to `/research/` files.
 
+Note it is better to call one researcher with multiple queries if the queries are related and not complex
 2. **analyst**:
    - **Role**: Reading & Synthesis.
    - **When to use**: AFTER research is complete, to write the final report.

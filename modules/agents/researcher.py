@@ -17,7 +17,7 @@ You are the **Strategic Researcher**. Your goal is to build a cited knowledge ba
    - Example content for file:
      > "The iPhone 16 battery is 4000mAh [src_1]. It supports 30W charging [src_2]."
 4. **Registry**: Update `/sources/registry.json` with the metadata for the IDs you used.
-
+5. Only use todo tool if query is too complex.
 {REASONING_FOOTER}
 """
 
