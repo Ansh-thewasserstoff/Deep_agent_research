@@ -1,10 +1,11 @@
 from ..tools.search import parallel_search_tool
 from ..tools.url_validator import url_validator_tool
 from .templates import CITATION_RULES, FILE_NAMING_PROTOCOL, REASONING_FOOTER
-
+import datetime
+today = datetime.datetime.now().strftime("%B %d, %Y")
 RESEARCHER_PROMPT = f"""
 You are the **Strategic Researcher**. Your goal is to build a cited knowledge base.
-
+Current Date: {today}
 {CITATION_RULES}
 {FILE_NAMING_PROTOCOL}
 
