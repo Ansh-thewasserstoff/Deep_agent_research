@@ -19,6 +19,7 @@ def check_password():
     """Returns `True` if the user had the correct password."""
 
     def password_entered():
+        print("password entered")
         """Checks whether a password entered by the user is correct."""
         if st.session_state["password"] == st.secrets["password"]:
             st.session_state["password_correct"] = True
@@ -45,7 +46,7 @@ if not check_password():
 st.write("👋 Hello! If you can see this, you are logged in.")
 # --- Import your actual backend ---
 try:
-    from modules.core.orchestrator import create_research_system
+    from modules.core.orchestrator2 import create_solo_agent
 except ImportError:
     # Fallback Mock
     pass
@@ -119,7 +120,7 @@ def parse_agent_output(raw_content):
 async def run_agent_interaction(user_input, tier, thread_id):
     if st.session_state.agent is None or st.session_state.current_tier != tier:
         with st.status(f"🚀 Initializing {tier.upper()} Tier Agent...", expanded=False) as status:
-            st.session_state.agent = create_research_system(tier=tier)
+            st.session_state.agent = create_solo_agent()
             st.session_state.current_tier = tier
             status.update(label=f"Agent Ready ({tier.upper()})", state="complete")
 

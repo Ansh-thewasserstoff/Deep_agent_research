@@ -5,6 +5,8 @@ description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.2",
+    "arize-phoenix[evals]>=12.28.1",
+    "arize[tracing]>=7.51.2",
     "deepagents>=0.3.0",
     "fastapi>=0.127.0",
     "google-genai>=1.56.0",
@@ -12,10 +14,12 @@ dependencies = [
     "langchain-openai>=1.1.6",
     "motor>=3.7.1",
     "openai>=2.14.0",
+    "openinference-instrumentation-langchain>=0.1.58",
     "pydantic>=2.12.5",
     "pymongo>=4.15.5",
     "python-dotenv>=1.2.1",
     "streamlit>=1.52.2",
     "tavily-python>=0.7.17",
+    "trafilatura>=2.0.0",
     "uvicorn>=0.40.0",
 ]

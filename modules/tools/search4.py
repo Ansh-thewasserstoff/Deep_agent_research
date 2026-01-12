@@ -2,16 +2,69 @@ import os
 import asyncio
 import json
 import httpx
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.tools import tool
-from typing import List, Optional
+import csv
+from typing import List, Optional, Set
 from dotenv import load_dotenv
+from langchain_core.tools import tool
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Load environment variables
 load_dotenv()
 
+# --- 1. CONFIGURATION & REFINER ---
+
 _SEARCH_CACHE = {}
+_VERIFIED_URLS_CACHE: Set[str] = set()
+
+
+# Load Verified URLs from CSV
+def load_verified_urls(csv_path: str = "verified_urls.csv"):
+    """Loads a list of trusted URLs from a CSV file."""
+    global _VERIFIED_URLS_CACHE
+    if _VERIFIED_URLS_CACHE:
+        return  # Already loaded
+
+    verified_list = []
+    # If file exists, read it. Otherwise, use your hardcoded list as fallback/default.
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.reader(f)
+                next(reader, None)  # Skip header if "URL" is the first row
+                for row in reader:
+                    if row:
+                        url = row[0].strip()
+                        if url.startswith("http"):
+                            verified_list.append(url)
+            print(f"Loaded {len(verified_list)} verified URLs from {csv_path}")
+        except Exception as e:
+            print(f"Error reading verified CSV: {e}")
+    else:
+        # Fallback list (The one you provided)
+        print("Warning: verified_urls.csv not found. Using default list.")
+        verified_list = [
+            "https://judgments.ecourts.gov.in/",
+            "https://ecourts.gov.in/",
+            "https://njdg.ecourts.gov.in/",
+            "https://ecommitteesci.gov.in/",
+            "https://doj.gov.in/",
+            "https://districts.ecourts.gov.in/",
+            "http://www.delhihighcourt.nic.in/",
+            "https://highcourt.kerala.gov.in/",
+            "https://bombayhighcourt.nic.in/",
+            "https://hcmadras.tn.gov.in/",
+            "https://tshc.gov.in/",
+            "https://orissahighcourt.nic.in/",
+            "https://patnahighcourt.gov.in/",
+            "https://aphc.gov.in/",
+            "https://mphc.gov.in/"
+        ]
+
+    _VERIFIED_URLS_CACHE = set(verified_list)
+
+
+# Initialize Refiner
 if "GOOGLE_API_KEY" in os.environ:
     refiner_model = ChatGoogleGenerativeAI(
         model="gemini-2.0-flash-lite-preview",
@@ -19,46 +72,42 @@ if "GOOGLE_API_KEY" in os.environ:
         google_api_key=os.environ["GOOGLE_API_KEY"]
     )
 else:
-    print("Warning: GOOGLE_API_KEY not set. Refiner will not work.")
     refiner_model = None
 
 REFINER_PROMPT = """
 You are a Data Cleaning Engine. Your ONLY job is to extract the core informational content from the provided web scraper text.
-
-### RULES:
-1. **Remove Noise**: Delete navigation menus ("Home", "About Us"), footers, copyright notices, legal disclaimers, and ads.
-2. **Preserve Facts**: specific dates, numbers, prices, and technical specs MUST be kept exactly as is.
-3. **No Chatter**: Do not output "Here is the summary". Just output the cleaned text.
-4. **Format**: If the input is a list of items, keep it as a list.
-
-### INPUT TEXT:
+RULES:
+1. Remove Noise: nav menus, footers, copyright, ads.
+2. Preserve Facts: dates, numbers, prices, technical specs.
+3. No Chatter.
+INPUT TEXT:
 {raw_text}
 """
 
 
 async def refine_content(raw_text: str) -> str:
-    """Uses a cheap LLM to strip boilerplate from the text."""
-    # Safety check: if model isn't loaded or text is short
     if not refiner_model or len(raw_text) < 300:
         return raw_text
-
-    prompt = ChatPromptTemplate.from_template(REFINER_PROMPT)
-    chain = prompt | refiner_model
-
     try:
-        # Ainvoke makes it async and non-blocking
+        chain = ChatPromptTemplate.from_template(REFINER_PROMPT) | refiner_model
         response = await chain.ainvoke({"raw_text": raw_text})
         return response.content
-    except Exception as e:
-        # If the refiner fails (e.g. rate limit), fallback to raw text
+    except:
         return raw_text
+
+
+# --- 2. TOOLS ---
 
 @tool
 async def parallel_search_tool(queries: List[str], max_results_per_query: int = 3) -> str:
-    """Executes parallel web searches and returns high-level summaries."""
+    """Executes parallel web searches and prioritizes verified government/legal sources."""
+
+    # 1. Ensure verified URLs are loaded
+    load_verified_urls(csv_path=rf"{os.getenv("CSV_URL")}")
+
     api_key = os.getenv("PARALLEL_API_KEY")
     if not api_key:
-        return "Error: PARALLEL_API_KEY not found in environment variables."
+        return "Error: PARALLEL_API_KEY not found."
 
     url = "https://api.parallel.ai/v1beta/search"
     headers = {
@@ -68,59 +117,67 @@ async def parallel_search_tool(queries: List[str], max_results_per_query: int = 
     }
 
     async def fetch_single_objective(client, objective, start_src_id):
-        # We request "extract": True, but the API might return "excerpts"
         payload = {"objective": objective, "max_results": max_results_per_query, "extract": True}
         try:
             response = await client.post(url, json=payload, headers=headers, timeout=30.0)
             response.raise_for_status()
             data = response.json()
 
-            # Debug print to confirm data arrival (optional)
-            # print(f"DEBUG: Received {len(data.get('results', []))} results for '{objective}'")
-
             results = []
             src_counter = start_src_id
             sources_registry = {}
 
             for result in data.get("results", []):
-                # --- FIX STARTS HERE ---
-                # 1. Check for 'excerpts' (list) first, join them into a string
+                # Content Extraction Logic
                 excerpts = result.get("excerpts", [])
                 if isinstance(excerpts, list) and excerpts:
                     content = "\n\n".join(excerpts)
-                # 2. Fallback to 'extract' or 'snippet' if 'excerpts' is missing
                 else:
                     content = result.get("extract", result.get("snippet", ""))
-                # --- FIX ENDS HERE ---
 
                 url_link = result.get("url", "")
                 title = result.get("title", "Untitled")
-
-                # Safe domain extraction
                 try:
                     domain = url_link.split('/')[2]
                 except IndexError:
                     domain = "unknown"
 
-                src_id = f"src_{src_counter}"
+                # --- VERIFICATION LOGIC ---
+                is_verified = False
+                # Check if the result URL starts with any URL in our trusted list
+                # We normalize slightly by checking if trusted_url is IN result_url
+                for trusted_url in _VERIFIED_URLS_CACHE:
+                    # Remove 'www.' for looser matching if needed
+                    clean_trusted = trusted_url.replace("www.", "").rstrip("/")
+                    clean_link = url_link.replace("www.", "")
 
-                # Create a short preview for the LLM
-                snippet_preview = content[:100].replace("\n", " ") + "..." if len(content) > 100 else content
+                    if clean_trusted in clean_link:
+                        is_verified = True
+                        break
+
+                # Tag the title for the LLM
+                display_title = f"[VERIFIED] {title}" if is_verified else title
+                # --------------------------
+
+                src_id = f"src_{src_counter}"
+                snippet_preview = content[:100].replace("\n", " ") + "..."
 
                 results.append({
                     "id": src_id,
-                    "title": title,
+                    "title": display_title,  # LLM sees this
                     "domain": domain,
-                    "snippet": snippet_preview
+                    "snippet": snippet_preview,
+                    "is_verified": is_verified  # Hidden metadata
                 })
 
                 sources_registry[src_id] = {
                     "url": url_link,
-                    "title": title,
+                    "title": display_title,
                     "domain": domain,
-                    "full_content": content,  # This will now be populated
+                    "full_content": content,
                     "snippet": content[:200],
-                    "is_refined": False
+                    "is_refined": False,
+                    "is_verified": is_verified
                 }
                 src_counter += 1
 
@@ -128,6 +185,7 @@ async def parallel_search_tool(queries: List[str], max_results_per_query: int = 
         except Exception as e:
             return {"query": objective, "results": [], "sources": {}, "error": str(e)}
 
+    # Run Parallel Requests
     async with httpx.AsyncClient() as client:
         src_counter = 1
         tasks = []
@@ -136,13 +194,17 @@ async def parallel_search_tool(queries: List[str], max_results_per_query: int = 
             src_counter += max_results_per_query
         results_list = await asyncio.gather(*tasks)
 
+    # Aggregate
     all_sources = {}
     total_results = 0
+    verified_count = 0
+
     for result_data in results_list:
         all_sources.update(result_data['sources'])
         total_results += len(result_data['results'])
+        # Count verified
+        verified_count += sum(1 for r in result_data['results'] if r['is_verified'])
 
-    # Create a deterministic ID based on the query hash
     search_id = str(abs(hash(json.dumps(queries))))[:8]
     _SEARCH_CACHE[search_id] = {
         "queries": queries,
@@ -150,15 +212,19 @@ async def parallel_search_tool(queries: List[str], max_results_per_query: int = 
         "registry": all_sources
     }
 
+    # --- Build LLM Summary Output ---
     summary_lines = [f"SEARCH_COMPLETE [ID: {search_id}]"]
     summary_lines.append(f"Queries: {len(queries)} | Results: {total_results} | Sources: {len(all_sources)}")
+
+    if verified_count > 0:
+        summary_lines.append(f"*** FOUND {verified_count} VERIFIED OFFICIAL SOURCES ***")
 
     for result_data in results_list:
         summary_lines.append(f"\n## {result_data['query']}")
         for result in result_data['results']:
-            summary_lines.append(f"  [{result['id']}] {result['title'][:60]} ({result['domain']})")
+            # The [VERIFIED] tag is already in result['title']
+            summary_lines.append(f"  [{result['id']}] {result['title'][:80]} ({result['domain']})")
 
-    # Adding a helpful hint for the LLM
     summary_lines.append(f"\nUse get_source_details(['src_1', ...], search_id='{search_id}') to read content.")
 
     return "\n".join(summary_lines)
@@ -166,11 +232,7 @@ async def parallel_search_tool(queries: List[str], max_results_per_query: int = 
 
 @tool
 async def get_source_details(source_ids: List[str], search_id: Optional[str] = None) -> str:
-    """
-    Retrieves full content for specific source IDs.
-    automatically cleans/compresses the content using a lightweight LLM.
-    """
-    # 1. Locate Cache
+    """Retrieves full content for specific source IDs with auto-refinement."""
     if search_id and search_id in _SEARCH_CACHE:
         search_data = _SEARCH_CACHE[search_id]
     elif _SEARCH_CACHE:
@@ -182,21 +244,16 @@ async def get_source_details(source_ids: List[str], search_id: Optional[str] = N
     results = {}
     tasks = []
 
-    # 2. Identify which sources need processing
     ids_to_process = [sid for sid in source_ids if sid in registry]
 
-    # 3. Define a helper to process a single ID
     async def process_source(src_id):
         src = registry[src_id]
         raw_text = src.get('full_content', '')
 
-        # Check if already refined to save time/tokens
         if src.get('is_refined', False):
             final_text = raw_text
         else:
-            # RUN THE REFINER
             final_text = await refine_content(raw_text)
-            # Update cache so we don't refine again next time
             registry[src_id]['full_content'] = final_text
             registry[src_id]['is_refined'] = True
 
@@ -204,10 +261,10 @@ async def get_source_details(source_ids: List[str], search_id: Optional[str] = N
             "title": src['title'],
             "url": src['url'],
             "domain": src['domain'],
+            "is_verified": src.get('is_verified', False),  # Pass this flag to LLM again
             "content": final_text
         }
 
-    # 4. Run refinement in parallel
     if not ids_to_process:
         return json.dumps({"sources": {}, "count": 0})
 
@@ -216,11 +273,11 @@ async def get_source_details(source_ids: List[str], search_id: Optional[str] = N
 
     processed_items = await asyncio.gather(*tasks)
 
-    # 5. Build Result Dictionary
     for src_id, data in processed_items:
         results[src_id] = data
 
     return json.dumps({"sources": results, "count": len(results)}, indent=2)
+
 
 @tool
 def list_available_domains(search_id: Optional[str] = None) -> str:
@@ -273,3 +330,5 @@ def filter_sources_by_domain(domains: List[str], search_id: Optional[str] = None
     }
 
     return json.dumps(output, indent=2)
+
+# ... (Include list_available_domains and filter_sources_by_domain from previous code) ...
